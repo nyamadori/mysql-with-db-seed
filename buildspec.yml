@@ -1,0 +1,29 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - $(aws ecr get-login --region $AWS_DEFAULT_REGION --no-include-email)
+      - aws s3 cp s3://${DUMP_BUCKET}/${DUMP_PATH} .
+      - docker build -t mysql_without_volume docker/mysql_without_volume
+      - docker run -d --name mysql_with_seed -e 'MYSQL_ALLOW_EMPTY_PASSWORD=yes' -p 3306:3306 mysql_without_volume
+      - sudo apt update && sudo apt-get -y install mysql-client
+  build:
+    commands:
+      - DOCKER_IMAGE_TAG=$(date '+%Y%m%d')
+      - DOCKER_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${IMAGE_REPO_NAME}"
+      - echo $DOCKER_REPO
+      - echo $DOCKER_IMAGE_TAG
+      - |
+          mysql -u root -h 127.0.0.1 <<-SQL
+            create database ${DUMP_DATABASE} CHARACTER SET utf8mb4;
+          SQL
+      - gzip -dc $(basename $DUMP_PATH) | mysql -u root -h 127.0.0.1 -f ${DUMP_DATABASE}
+      - docker commit mysql_with_seed "${DOCKER_REPO}:latest"
+      - docker commit mysql_with_seed "${DOCKER_REPO}:${DOCKER_IMAGE_TAG}"
+  post_build:
+    commands:
+      - echo $DOCKER_REPO
+      - echo $DOCKER_IMAGE_TAG
+      - docker push "${DOCKER_REPO}:latest"
+      - docker push "${DOCKER_REPO}:${DOCKER_IMAGE_TAG}"
